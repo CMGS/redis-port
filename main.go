@@ -12,6 +12,7 @@ func main() {
 
 	flag.StringVar(&from, "from", "localhost:6379", "from redis")
 	flag.StringVar(&target, "to", "localhost:6380", "to redis")
-	port := sync.NewPorter(from, to)
-	p.Run()
+	flag.Parse()
+	port := sync.NewPorter(from, target)
+	port.Run()
 }

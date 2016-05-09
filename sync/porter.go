@@ -67,6 +67,7 @@ func (self *Porter) Run() {
 
 func (self *Porter) failure(err error) {
 	self.close()
+	fmt.Println(err)
 	time.Sleep(5 * time.Second)
 }
 
