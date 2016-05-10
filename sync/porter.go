@@ -175,6 +175,7 @@ func (self *Porter) aof() error {
 		select {
 		default:
 			if self.position < self.read {
+				fmt.Println(self.buffer[self.position:self.read])
 				self.targetConn.Write(self.buffer[self.position:self.read])
 			}
 			n, err := self.fromConn.Read(self.buffer)

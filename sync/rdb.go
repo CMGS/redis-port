@@ -52,8 +52,8 @@ func (self *decoder) Rpush(key, value []byte) {
 }
 
 func (self *decoder) Zadd(key []byte, score float64, member []byte) {
-	sl := len(fmt.Sprintf("%f", score))
-	_, e := fmt.Fprintf(self.targetConn, "*4\r\n$4\r\nZADD\r\n$%d\r\n%s\r\n$%d\r\n%f\r\n$%d\r\n%s\r\n", len(key), key, sl, score, len(member), member)
+	sl := len(fmt.Sprintf("%v", score))
+	_, e := fmt.Fprintf(self.targetConn, "*4\r\n$4\r\nZADD\r\n$%d\r\n%s\r\n$%d\r\n%v\r\n$%d\r\n%s\r\n", len(key), key, sl, score, len(member), member)
 	if e != nil {
 		fmt.Println(e)
 		fmt.Printf("*4\r\n$4\r\nZADD\r\n$%d\r\n%s\r\n$%d\r\n%f\r\n$%d\r\n%s\r\n", len(key), key, sl, score, len(member), member)
