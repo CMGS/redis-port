@@ -55,7 +55,10 @@ func (self *Porter) Run() {
 			self.failure(err)
 			continue
 		}
-		go self.transfer()
+		if err := self.transfer(); err != nil {
+			self.failure(err)
+			continue
+		}
 		if err := self.aof(); err != nil {
 			self.failure(err)
 			continue
@@ -79,22 +82,22 @@ func (self *Porter) connect(addr string) (net.Conn, error) {
 	return conn, nil
 }
 
-func (self *Porter) transfer() {
+func (self *Porter) transfer() error {
 	fmt.Println("begin transfer rdb to redis")
 	cmd := exec.Command("rdb", "--command", "protocol", self.filename)
 	go cmd.Run()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
-	conn, _ := self.connect(self.target)
-	fmt.Println(io.Copy(conn, stdout))
+	fmt.Println(io.Copy(self.targetConn, stdout))
 	fmt.Println("transfer rdb to redis end")
-	os.Remove(self.filename)
+	//os.Remove(self.filename)
+	return nil
 }
 
 func (self *Porter) dump() error {
+	fmt.Println("begin sync")
 	self.read = 0
 	self.fromConn.Write([]byte("*1\r\n$4\r\nSYNC\r\n"))
 	length, err := self.readDumpInfo()
@@ -108,6 +111,7 @@ func (self *Porter) dump() error {
 	}
 	defer f.Close()
 
+	fmt.Println("begin dump")
 	for {
 		end := self.position + length
 		if end > self.read {
@@ -127,6 +131,7 @@ func (self *Porter) dump() error {
 		}
 		self.position = 0
 	}
+	fmt.Println("dump end")
 
 	return nil
 }
@@ -167,7 +172,7 @@ func (self *Porter) readDumpInfo() (int, error) {
 }
 
 func (self *Porter) aof() error {
-	fmt.Println("get aof stream")
+	fmt.Println("begin aof stream")
 	for {
 		select {
 		default:
