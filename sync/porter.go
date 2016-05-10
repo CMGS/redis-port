@@ -3,12 +3,12 @@ package sync
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"os/exec"
 	"strconv"
 	"time"
+
+	"github.com/cupcake/rdb"
 )
 
 const (
@@ -84,16 +84,17 @@ func (self *Porter) connect(addr string) (net.Conn, error) {
 
 func (self *Porter) transfer() error {
 	fmt.Println("begin transfer rdb to redis")
-	cmd := exec.Command("rdb", "--command", "protocol", self.filename)
-	go cmd.Run()
-	stdout, err := cmd.StdoutPipe()
+	f, err := os.Open(self.filename)
 	if err != nil {
 		return err
 	}
-	fmt.Println(io.Copy(self.targetConn, stdout))
+	d, err := NewDecoder(self.target)
+	if err != nil {
+		return err
+	}
 	fmt.Println("transfer rdb to redis end")
 	//os.Remove(self.filename)
-	return nil
+	return rdb.Decode(f, d)
 }
 
 func (self *Porter) dump() error {
