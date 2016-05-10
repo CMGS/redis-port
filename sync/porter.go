@@ -55,7 +55,7 @@ func (self *Porter) Run() {
 			self.failure(err)
 			continue
 		}
-		if _, err := self.transfer(); err != nil {
+		if err := self.transfer(); err != nil {
 			self.failure(err)
 			continue
 		}
@@ -82,17 +82,16 @@ func (self *Porter) connect(addr string) (net.Conn, error) {
 	return conn, nil
 }
 
-func (self *Porter) transfer() (int64, error) {
+func (self *Porter) transfer() error {
 	fmt.Println("begin transfer rdb to redis")
 	f, err := os.Open(self.filename)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	d, _ := NewDecoder(self.targetConn)
-	fmt.Println("transfer rdb to redis end")
+	//fmt.Println("transfer rdb to redis end")
 	//os.Remove(self.filename)
-	rdb.Decode(f, d)
-	return d.Send()
+	return rdb.Decode(f, d)
 }
 
 func (self *Porter) dump() error {
