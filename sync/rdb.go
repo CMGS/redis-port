@@ -9,53 +9,92 @@ import (
 
 type decoder struct {
 	nopdecoder.NopDecoder
+	target     string
 	targetConn net.Conn
 }
 
 var err error
+var CRLF = []byte("\r\n")
+var SET = []byte("*3\r\n$3\r\nSET\r\n")
+var HSET = []byte("*4\r\n$4\r\nHSET\r\n")
+var SADD = []byte("*3\r\n$4\r\nSADD\r\n")
+var RPUSH = []byte("*3\r\n$5\r\nRPUSH\r\n")
+var ZADD = []byte("*4\r\n$4\r\nZADD\r\n")
 
-func NewDecoder(targetConn net.Conn) (*decoder, error) {
-	d := &decoder{targetConn: targetConn}
-	return d, nil
+const LEN = "$%d\r\n"
+
+func NewDecoder(target string) *decoder {
+	d := &decoder{target: target}
+	d.connect()
+	return d
 }
 
-func (self *decoder) Set(key, value []byte, expiry int64) {
-	_, e := fmt.Fprintf(self.targetConn, "*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(value), value)
-	if e != nil {
-		fmt.Println(e)
-		fmt.Printf("*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(value), value)
+func (self *decoder) close() {
+	if err := self.targetConn.Close(); err != nil {
+		fmt.Println(err)
 	}
+}
+
+func (self *decoder) connect() {
+	conn, err := net.Dial("tcp", self.target)
+	if err != nil {
+		fmt.Println("connect failed", err)
+		return
+	}
+	self.targetConn = conn
+}
+
+func (self *decoder) StartRDB() {
+	fmt.Println("Start transfer rdb")
+}
+
+func (self *decoder) EndRDB() {
+	fmt.Println("Transfer rdb finished")
+	self.close()
+}
+
+func (self *decoder) do(args ...[]byte) {
+	for _, arg := range args {
+		if _, err := self.targetConn.Write(arg); err != nil {
+			fmt.Print(err, string(arg))
+			self.close()
+			self.connect()
+			return
+		}
+	}
+}
+
+var keyLen, valueLen, fieldLen, memberLen, scoreByte, scoreLen []byte
+
+func (self *decoder) Set(key, value []byte, expiry int64) {
+	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
+	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
+	self.do(SET, keyLen, key, CRLF, valueLen, value, CRLF)
 }
 
 func (self *decoder) Hset(key, field, value []byte) {
-	_, e := fmt.Fprintf(self.targetConn, "*4\r\n$4\r\nHSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(field), field, len(value), value)
-	if e != nil {
-		fmt.Println(e)
-		fmt.Printf("*4\r\n$4\r\nHSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(field), field, len(value), value)
-	}
+	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
+	fieldLen = []byte(fmt.Sprintf(LEN, len(field)))
+	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
+	self.do(HSET, keyLen, key, CRLF, fieldLen, field, CRLF, valueLen, value, CRLF)
 }
 
 func (self *decoder) Sadd(key, member []byte) {
-	_, e := fmt.Fprintf(self.targetConn, "*3\r\n$4\r\nSADD\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(member), member)
-	if e != nil {
-		fmt.Println(e)
-		fmt.Printf("*3\r\n$4\r\nSADD\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(member), member)
-	}
+	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
+	memberLen = []byte(fmt.Sprintf(LEN, len(member)))
+	self.do(SADD, keyLen, key, CRLF, memberLen, member, CRLF)
 }
 
 func (self *decoder) Rpush(key, value []byte) {
-	_, e := fmt.Fprintf(self.targetConn, "*3\r\n$5\r\nRPUSH\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(value), value)
-	if e != nil {
-		fmt.Println(e)
-		fmt.Printf("*3\r\n$5\r\nRPUSH\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(value), value)
-	}
+	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
+	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
+	self.do(RPUSH, keyLen, key, CRLF, valueLen, value, CRLF)
 }
 
 func (self *decoder) Zadd(key []byte, score float64, member []byte) {
-	sl := len(fmt.Sprintf("%v", score))
-	_, e := fmt.Fprintf(self.targetConn, "*4\r\n$4\r\nZADD\r\n$%d\r\n%s\r\n$%d\r\n%v\r\n$%d\r\n%s\r\n", len(key), key, sl, score, len(member), member)
-	if e != nil {
-		fmt.Println(e)
-		fmt.Printf("*4\r\n$4\r\nZADD\r\n$%d\r\n%s\r\n$%d\r\n%f\r\n$%d\r\n%s\r\n", len(key), key, sl, score, len(member), member)
-	}
+	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
+	memberLen = []byte(fmt.Sprintf(LEN, len(member)))
+	scoreByte = []byte(fmt.Sprintf("%v", score))
+	scoreLen = []byte(fmt.Sprintf(LEN, len(scoreByte)))
+	self.do(ZADD, keyLen, key, CRLF, scoreLen, scoreByte, CRLF, memberLen, member, CRLF)
 }

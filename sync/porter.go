@@ -3,6 +3,7 @@ package sync
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -46,11 +47,6 @@ func (self *Porter) Run() {
 			continue
 		}
 		self.fromConn = conn
-		if conn, err = self.connect(self.target); err != nil {
-			self.failure(err)
-			continue
-		}
-		self.targetConn = conn
 		if err := self.dump(); err != nil {
 			self.failure(err)
 			continue
@@ -59,6 +55,12 @@ func (self *Porter) Run() {
 			self.failure(err)
 			continue
 		}
+		// after dump begin aof waiting
+		if conn, err = self.connect(self.target); err != nil {
+			self.failure(err)
+			continue
+		}
+		self.targetConn = conn
 		if err := self.aof(); err != nil {
 			self.failure(err)
 			continue
@@ -83,14 +85,13 @@ func (self *Porter) connect(addr string) (net.Conn, error) {
 }
 
 func (self *Porter) transfer() error {
-	fmt.Println("begin transfer rdb to redis")
 	f, err := os.Open(self.filename)
 	if err != nil {
 		return err
 	}
-	d, _ := NewDecoder(self.targetConn)
+	d := NewDecoder(self.target)
 	//fmt.Println("transfer rdb to redis end")
-	//os.Remove(self.filename)
+	os.Remove(self.filename)
 	return rdb.Decode(f, d)
 }
 
@@ -171,21 +172,11 @@ func (self *Porter) readDumpInfo() (int, error) {
 
 func (self *Porter) aof() error {
 	fmt.Println("begin aof stream")
-	for {
-		select {
-		default:
-			if self.position < self.read {
-				fmt.Println(self.buffer[self.position:self.read])
-				self.targetConn.Write(self.buffer[self.position:self.read])
-			}
-			n, err := self.fromConn.Read(self.buffer)
-			if err != nil {
-				return err
-			}
-			self.position = 0
-			self.read = n
-		}
-	}
+	f, _ := os.Open("/dev/null")
+	go io.Copy(f, self.targetConn)
+	_, err := io.Copy(self.targetConn, self.fromConn)
+	f.Close()
+	return err
 }
 
 func (self *Porter) close() {
