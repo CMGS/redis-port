@@ -3,8 +3,8 @@ package sync
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net"
+	"os"
 	"strconv"
 
 	"github.com/CodisLabs/redis-port/pkg/libs/log"
@@ -24,9 +24,7 @@ type decoder struct {
 	fromConn   net.Conn
 	targetConn net.Conn
 
-	writeFile *io.PipeWriter
-	readFile  *io.PipeReader
-	done      chan int
+	f *os.File
 }
 
 const (
@@ -59,26 +57,23 @@ func NewDecoder(from, target string) *decoder {
 		log.Panic(err, "Init target conn failed")
 	}
 	d.targetConn = targetConn
-	r, w := io.Pipe()
-	d.writeFile = w
-	d.readFile = r
-	d.done = make(chan int)
 	return d
 }
 
 func (self *decoder) Run() {
-	go func() {
-		if err := rdb.Decode(self.readFile, self); err != nil {
-			log.Panic(err, "decode rdb stream failed")
-		}
-		self.done <- 1
-	}()
+	filename := fmt.Sprintf("./%s.rdb", self.from)
+	f, err := os.Create(filename)
+	if err != nil {
+		log.Panic(err)
+	}
+	self.f = f
 	self.dump()
-	// wait for decode done
-	<-self.done
-	close(self.done)
-	self.readFile.Close()
-	self.writeFile.Close()
+	self.f.Seek(0, 0)
+	if err := rdb.Decode(self.f, self); err != nil {
+		log.Panic(err, " decode rdb stream failed")
+	}
+	f.Close()
+	os.Remove(filename)
 	self.aof()
 }
 
@@ -99,7 +94,7 @@ func (self *decoder) dump() {
 		if end > self.read {
 			end = self.read
 		}
-		if _, err := self.writeFile.Write(self.buffer[self.position:end]); err != nil {
+		if _, err := self.f.Write(self.buffer[self.position:end]); err != nil {
 			log.Panic(err, "write to Pipe file failed")
 		}
 		length -= end - self.position
