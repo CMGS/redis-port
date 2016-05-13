@@ -59,6 +59,7 @@ func (self *decoder) do(args ...[]byte) {
 			fmt.Print(err, string(arg))
 			self.close()
 			self.connect()
+			fmt.Println(self.targetConn.Write(arg))
 			return
 		}
 	}
