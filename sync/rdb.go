@@ -235,7 +235,7 @@ func (self *decoder) StartList(key []byte, length, expiry int64) {
 	//self.do(DEL, key, CRLF)
 	elemLen := 2 + length
 	rpush := []byte(fmt.Sprintf("*%d\r\n$5\r\nRPUSH\r\n", elemLen))
-	self.array = [][]byte{}
+	self.array = make([][]byte, 8+length*3)
 	keyLen := []byte(fmt.Sprintf(LEN, len(key)))
 	del := []byte("*2\r\n$3\r\nDEL\r\n")
 	self.array = append(self.array, del, keyLen, key, CRLF, rpush, keyLen, key, CRLF)
