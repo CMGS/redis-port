@@ -23,6 +23,7 @@ type decoder struct {
 	target     string
 	fromConn   net.Conn
 	targetConn net.Conn
+	array      [][]byte
 
 	f *os.File
 }
@@ -36,7 +37,6 @@ var CRLF = []byte("\r\n")
 var SET = []byte("*3\r\n$3\r\nSET\r\n")
 var HSET = []byte("*4\r\n$4\r\nHSET\r\n")
 var SADD = []byte("*3\r\n$4\r\nSADD\r\n")
-var RPUSH = []byte("*3\r\n$5\r\nRPUSH\r\n")
 var ZADD = []byte("*4\r\n$4\r\nZADD\r\n")
 var SYNC = []byte("*1\r\n$4\r\nSYNC\r\n")
 var keyLen, valueLen, fieldLen, memberLen, scoreByte, scoreLen []byte
@@ -151,12 +151,14 @@ func (self *decoder) aof() {
 	for {
 		if self.position < self.read {
 			if _, err := self.targetConn.Write(self.buffer[self.position:self.read]); err != nil {
-				log.Panic(err, "aof stream failed")
+				log.ErrorError(err, " aof stream failed")
+				self.keepAlive(self.buffer[self.position:self.read])
+				log.Info(" aof stream restore")
 			}
 		}
 		n, err := self.fromConn.Read(self.buffer)
 		if err != nil {
-			log.Panic(err, "aof stream failed")
+			log.Panic(err, " aof stream failed")
 		}
 		self.position = 0
 		self.read = n
@@ -184,10 +186,28 @@ func (self *decoder) EndRDB() {
 	log.Info("Transfer rdb finished")
 }
 
+func (self *decoder) keepAlive(arg []byte) {
+	self.targetConn.Close()
+	for {
+		targetConn, err := net.Dial("tcp", self.target)
+		if err != nil {
+			log.ErrorError(err, "Reconnect target conn failed")
+			continue
+		}
+		self.targetConn = targetConn
+		if _, err := self.targetConn.Write(arg); err != nil {
+			log.Panic(err, " Network have some problem")
+		}
+		break
+	}
+}
+
 func (self *decoder) do(args ...[]byte) {
 	for _, arg := range args {
 		if _, err := self.targetConn.Write(arg); err != nil {
-			log.Panic(err, string(arg))
+			log.ErrorError(err, string(arg))
+			self.keepAlive(arg)
+			log.Info("transfer restore")
 		}
 	}
 }
@@ -211,10 +231,23 @@ func (self *decoder) Sadd(key, member []byte) {
 	self.do(SADD, keyLen, key, CRLF, memberLen, member, CRLF)
 }
 
+func (self *decoder) StartList(key []byte, length, expiry int64) {
+	//self.do(DEL, key, CRLF)
+	elemLen := 2 + length
+	rpush := []byte(fmt.Sprintf("*%d\r\n$5\r\nRPUSH\r\n", elemLen))
+	self.array = [][]byte{}
+	keyLen := []byte(fmt.Sprintf(LEN, len(key)))
+	del := []byte("*2\r\n$3\r\nDEL\r\n")
+	self.array = append(self.array, del, keyLen, key, CRLF, rpush, keyLen, key, CRLF)
+}
+
 func (self *decoder) Rpush(key, value []byte) {
-	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
 	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
-	self.do(RPUSH, keyLen, key, CRLF, valueLen, value, CRLF)
+	self.array = append(self.array, valueLen, value, CRLF)
+}
+
+func (self *decoder) EndList(key []byte) {
+	self.do(self.array...)
 }
 
 func (self *decoder) Zadd(key []byte, score float64, member []byte) {
