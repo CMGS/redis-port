@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -23,7 +24,7 @@ type decoder struct {
 	target     string
 	fromConn   net.Conn
 	targetConn net.Conn
-	array      [][]byte
+	listBuff   *bytes.Buffer
 
 	f *os.File
 }
@@ -31,15 +32,15 @@ type decoder struct {
 const (
 	BUFFER_SIZE = 32768
 	LEN         = "$%d\r\n"
+	SET         = "*3\r\n$3\r\nSET\r\n"
+	HSET        = "*4\r\n$4\r\nHSET\r\n"
+	SADD        = "*3\r\n$4\r\nSADD\r\n"
+	ZADD        = "*4\r\n$4\r\nZADD\r\n"
+	DEL         = "*2\r\n$3\r\nDEL\r\n"
+	CRLF        = "\r\n"
 )
 
-var CRLF = []byte("\r\n")
-var SET = []byte("*3\r\n$3\r\nSET\r\n")
-var HSET = []byte("*4\r\n$4\r\nHSET\r\n")
-var SADD = []byte("*3\r\n$4\r\nSADD\r\n")
-var ZADD = []byte("*4\r\n$4\r\nZADD\r\n")
 var SYNC = []byte("*1\r\n$4\r\nSYNC\r\n")
-var keyLen, valueLen, fieldLen, memberLen, scoreByte, scoreLen []byte
 
 func NewDecoder(from, target string) *decoder {
 	d := &decoder{
@@ -196,64 +197,92 @@ func (self *decoder) keepAlive(arg []byte) {
 		}
 		self.targetConn = targetConn
 		if _, err := self.targetConn.Write(arg); err != nil {
-			log.Panic(err, " Network have some problem")
+			log.Panic(err, " network have some problem")
 		}
 		break
 	}
 }
 
-func (self *decoder) do(args ...[]byte) {
-	for _, arg := range args {
-		if _, err := self.targetConn.Write(arg); err != nil {
-			log.ErrorError(err, string(arg))
-			self.keepAlive(arg)
-			log.Info("transfer restore")
-		}
+func (self *decoder) do(b []byte) {
+	if _, err := self.targetConn.Write(b); err != nil {
+		log.ErrorError(err, string(b))
+		self.keepAlive(b)
+		log.Info("transfer restore")
 	}
 }
 
 func (self *decoder) Set(key, value []byte, expiry int64) {
-	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
-	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
-	self.do(SET, keyLen, key, CRLF, valueLen, value, CRLF)
+	buffer := bytes.NewBufferString(SET)
+	buffer.WriteString(fmt.Sprintf(LEN, len(key)))
+	buffer.Write(key)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(fmt.Sprintf(LEN, len(value)))
+	buffer.Write(value)
+	buffer.WriteString(CRLF)
+	self.do(buffer.Bytes())
 }
 
 func (self *decoder) Hset(key, field, value []byte) {
-	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
-	fieldLen = []byte(fmt.Sprintf(LEN, len(field)))
-	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
-	self.do(HSET, keyLen, key, CRLF, fieldLen, field, CRLF, valueLen, value, CRLF)
+	buffer := bytes.NewBufferString(HSET)
+	buffer.WriteString(fmt.Sprintf(LEN, len(key)))
+	buffer.Write(key)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(fmt.Sprintf(LEN, len(field)))
+	buffer.Write(field)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(fmt.Sprintf(LEN, len(value)))
+	buffer.Write(value)
+	buffer.WriteString(CRLF)
+	self.do(buffer.Bytes())
 }
 
 func (self *decoder) Sadd(key, member []byte) {
-	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
-	memberLen = []byte(fmt.Sprintf(LEN, len(member)))
-	self.do(SADD, keyLen, key, CRLF, memberLen, member, CRLF)
+	buffer := bytes.NewBufferString(SADD)
+	buffer.WriteString(fmt.Sprintf(LEN, len(key)))
+	buffer.Write(key)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(fmt.Sprintf(LEN, len(member)))
+	buffer.Write(member)
+	buffer.WriteString(CRLF)
+	self.do(buffer.Bytes())
 }
 
 func (self *decoder) StartList(key []byte, length, expiry int64) {
-	//self.do(DEL, key, CRLF)
+	keyLen := fmt.Sprintf(LEN, len(key))
+	self.listBuff = bytes.NewBufferString(DEL)
+	self.listBuff.WriteString(keyLen)
+	self.listBuff.Write(key)
+	self.listBuff.WriteString(CRLF)
 	elemLen := 2 + length
-	rpush := []byte(fmt.Sprintf("*%d\r\n$5\r\nRPUSH\r\n", elemLen))
-	self.array = make([][]byte, 8+length*3)
-	keyLen := []byte(fmt.Sprintf(LEN, len(key)))
-	del := []byte("*2\r\n$3\r\nDEL\r\n")
-	self.array = append(self.array, del, keyLen, key, CRLF, rpush, keyLen, key, CRLF)
+	rpush := fmt.Sprintf("*%d\r\n$5\r\nRPUSH\r\n", elemLen)
+	self.listBuff.WriteString(rpush)
+	self.listBuff.WriteString(keyLen)
+	self.listBuff.Write(key)
+	self.listBuff.WriteString(CRLF)
 }
 
 func (self *decoder) Rpush(key, value []byte) {
-	valueLen = []byte(fmt.Sprintf(LEN, len(value)))
-	self.array = append(self.array, valueLen, value, CRLF)
+	self.listBuff.WriteString(fmt.Sprintf(LEN, len(value)))
+	self.listBuff.Write(value)
+	self.listBuff.WriteString(CRLF)
 }
 
 func (self *decoder) EndList(key []byte) {
-	self.do(self.array...)
+	self.do(self.listBuff.Bytes())
 }
 
 func (self *decoder) Zadd(key []byte, score float64, member []byte) {
-	keyLen = []byte(fmt.Sprintf(LEN, len(key)))
-	memberLen = []byte(fmt.Sprintf(LEN, len(member)))
-	scoreByte = []byte(fmt.Sprintf("%v", score))
-	scoreLen = []byte(fmt.Sprintf(LEN, len(scoreByte)))
-	self.do(ZADD, keyLen, key, CRLF, scoreLen, scoreByte, CRLF, memberLen, member, CRLF)
+	buffer := bytes.NewBufferString(ZADD)
+	scoreStr := fmt.Sprintf("%v", score)
+	scoreLen := fmt.Sprintf(LEN, len(scoreStr))
+	buffer.WriteString(fmt.Sprintf(LEN, len(key)))
+	buffer.Write(key)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(scoreLen)
+	buffer.WriteString(scoreStr)
+	buffer.WriteString(CRLF)
+	buffer.WriteString(fmt.Sprintf(LEN, len(member)))
+	buffer.Write(member)
+	buffer.WriteString(CRLF)
+	self.do(buffer.Bytes())
 }
